@@ -1,0 +1,12 @@
+import { Router } from "express";
+import auth from "../middleware/auth.js";
+import { getProgress, importLegacyProgress, leaderboard, resetProgress, updateNote, updateProgress } from "../controllers/progressController.js";
+const router = Router();
+router.use(auth);
+router.get("/", getProgress);
+router.post("/migrate", importLegacyProgress);
+router.put("/:courseId", updateProgress);
+router.put("/:courseId/notes/:lessonIndex", updateNote);
+router.delete("/", resetProgress);
+router.get("/leaderboard", leaderboard);
+export default router;
