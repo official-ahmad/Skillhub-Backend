@@ -8,6 +8,7 @@ export default async function auth(req, res, next) {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     const user = await User.findById(payload.sub);
     if (!user) return res.status(401).json({ error: "Account no longer exists" });
+    if (user.isSuspended) return res.status(403).json({ error: "Your account has been suspended by the administrator." });
     req.user = user;
     next();
   } catch {

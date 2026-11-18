@@ -11,13 +11,14 @@
    npm start
    ```
 
-The API listens on `PORT` (default `8005`). The seed command imports the existing 16 courses and 123 lessons from `FrontEnd/src/components/data/coursesData.js` and upserts them by course ID, so it can be run again safely.
+The API and seed command use the `SkillhubDB` database from the configured MongoDB Atlas URI. The idempotent seed creates the 50-student BSSE Evening roster, six core courses with six lessons each, and sample enrollment and progress records. It synchronizes the course collection to these six core courses and can be rerun safely.
 
 ## API routes
 
 - `GET /` health response
 - `GET /api/courses` and `GET /api/courses/:courseId`
+- `GET /api/students/leaderboard` returns the seeded class roster and standings
 - `POST /api/auth/google` accepts `{ "credential": "<Google ID token>" }`
 - `GET /api/auth/me` and `PATCH /api/auth/profile` (Bearer JWT)
-- `GET /api/progress`, `PUT /api/progress/:courseId`, `PUT /api/progress/:courseId/notes/:lessonIndex`, `DELETE /api/progress`, and `GET /api/progress/leaderboard` (Bearer JWT)
+- `GET /api/progress`, `PUT /api/progress/:courseId`, `PUT /api/progress/:courseId/notes/:lessonIndex`, and `DELETE /api/progress` (Bearer JWT)
 - `POST /api/progress/migrate` imports existing browser-stored lesson progress and notes once per account (Bearer JWT)

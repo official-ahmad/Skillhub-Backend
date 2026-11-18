@@ -1,6 +1,7 @@
 import { OAuth2Client } from "google-auth-library";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import UserActivityLog from "../models/UserActivityLog.js";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const serialize = (user) => user.toJSON();
@@ -19,6 +20,13 @@ export async function googleLogin(req, res, next) {
       { $set: { googleId, name: name || prefix, email: email.toLowerCase(), avatar: picture || "" }, $setOnInsert: { studentId: prefix } },
       { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true },
     );
+    if (user.isSuspended) return res.status(403).json({ error: "Your account has been suspended by the administrator." });
+    await UserActivityLog.create({
+      user: user._id,
+      action: "login",
+      ipAddress: req.ip || "",
+      userAgent: req.get("user-agent") || "",
+    });
     const token = jwt.sign({ sub: user.id }, process.env.JWT_SECRET, { expiresIn: "7d", issuer: "skillhub-api", audience: "skillhub-frontend" });
     res.json({ token, user: serialize(user) });
   } catch (error) { next(error); }
