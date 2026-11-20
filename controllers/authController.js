@@ -13,7 +13,6 @@ export async function googleLogin(req, res, next) {
     const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: process.env.GOOGLE_CLIENT_ID });
     const { sub: googleId, name, email, picture, email_verified: emailVerified } = ticket.getPayload() || {};
     if (!email || !emailVerified) return res.status(401).json({ error: "A verified Google email is required" });
-    if (!email.toLowerCase().endsWith("@students.au.edu.pk")) return res.status(403).json({ error: "Only official Air University student emails (@students.au.edu.pk) are allowed." });
     const normalizedEmail = email.trim().toLowerCase();
     const prefix = normalizedEmail.split("@")[0];
     const user = await User.findOne({ email: normalizedEmail });
