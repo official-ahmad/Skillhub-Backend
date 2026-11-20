@@ -11,6 +11,7 @@ import progressRoutes from "./routes/progress.js";
 import studentRoutes from "./routes/students.js";
 import adminRoutes from "./routes/admin.js";
 import queryRoutes from "./routes/queries.js";
+import technologyRoutes from "./routes/technologies.js";
 import cookieParser from "cookie-parser";
 
 validateEnvironment(["MONGO_URI", "JWT_SECRET", "ADMIN_JWT_SECRET", "GOOGLE_CLIENT_ID", "FRONTEND_URL", "PORT"]);
@@ -44,6 +45,7 @@ app.use(morgan("combined"));
 app.get("/", (_req, res) => res.json({ status: "OK", service: "Skillhub API" }));
 app.use("/api/auth", authRoutes);
 app.use("/api/courses", courseRoutes);
+app.use("/api/technologies", technologyRoutes);
 app.use("/api/progress", progressRoutes);
 app.use("/api/students", studentRoutes);
 app.use("/api/admin", adminRoutes);

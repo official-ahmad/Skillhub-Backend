@@ -15,6 +15,12 @@ const userSchema = new mongoose.Schema(
     avatar: { type: String, default: "" },
     studentId: { type: String, trim: true, default: "" },
     className: { type: String, trim: true, default: "" },
+    accountType: {
+      type: String,
+      enum: ["student", "instructor", "staff", "guest"],
+      default: "student",
+    },
+    passwordHash: { type: String, select: false, default: null },
     cohort: { type: String, trim: true, default: "" },
     enrolledCourses: { type: [String], default: [] },
     progress: { type: Map, of: Number, default: {} },

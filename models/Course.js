@@ -10,6 +10,10 @@ const courseSchema = new mongoose.Schema({
   icon: { type: String, default: "📘" },
   colorIndex: { type: Number, default: 0 },
   instructor: { type: String, default: "SkillHub" },
+  instructorPhoto: { type: String, default: "" },
+  instructorUrl: { type: String, default: "" },
+  instructorUrlVerified: { type: Boolean, default: false },
+  image: { type: String, default: "" },
   duration: { type: Number, default: 0 },
   lessons: { type: [mongoose.Schema.Types.Mixed], default: [] },
 }, { timestamps: true, versionKey: false });

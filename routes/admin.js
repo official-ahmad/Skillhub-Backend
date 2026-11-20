@@ -9,6 +9,9 @@ import Query from "../models/Query.js";
 import UserActivityLog from "../models/UserActivityLog.js";
 import verifyAdmin from "../middleware/verifyAdmin.js";
 import Enrollment from "../models/Enrollment.js";
+import Progress from "../models/Progress.js";
+import Technology from "../models/Technology.js";
+import { sendWelcomeEmail } from "../services/mailer.js";
 import { adminCookieOptions, clearAdminCookieOptions } from "../config/adminCookie.js";
 
 const router = Router();
@@ -70,6 +73,132 @@ router.post("/logout", verifyAdmin, (req, res) => {
 
 router.use(verifyAdmin);
 
+router.post("/users", async (req, res, next) => {
+  try {
+    const name = String(req.body.name || "").trim();
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const accountType = String(req.body.accountType || "student").trim().toLowerCase();
+    const studentId = String(req.body.studentId || "").trim();
+    const className = String(req.body.className || "").trim();
+    const password = String(req.body.password || "");
+    if (name.length < 2 || name.length > 120)
+      return res.status(400).json({ error: "Name must be between 2 and 120 characters" });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254)
+      return res.status(400).json({ error: "Enter a valid email address" });
+    if (!["student", "instructor", "staff", "guest"].includes(accountType))
+      return res.status(400).json({ error: "Choose a supported account type" });
+    if (studentId.length > 80 || className.length > 120)
+      return res.status(400).json({ error: "Student ID or class name is too long" });
+    if (password && password.length < 12)
+      return res.status(400).json({ error: "The optional account password must be at least 12 characters" });
+    if (await User.exists({ email }))
+      return res.status(409).json({ error: "A user with this email already exists" });
+
+    const passwordHash = password ? await bcrypt.hash(password, 12) : null;
+    const user = await User.create({ name, email, accountType, studentId, className, passwordHash });
+    const emailResult = await sendWelcomeEmail({ name, email, accountType });
+    res.status(201).json({
+      user: user.toJSON(),
+      welcomeEmail: emailResult,
+      message: emailResult.status === "sent"
+        ? "User created and welcome email sent"
+        : `User created. ${emailResult.message}`,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const normalizeCourseInput = (body) => {
+  const title = String(body.title || "").trim();
+  const category = String(body.category || "").trim();
+  if (title.length < 2 || title.length > 160) throw Object.assign(new Error("Course title must be between 2 and 160 characters"), { status: 400 });
+  if (category.length < 2 || category.length > 80) throw Object.assign(new Error("Category must be between 2 and 80 characters"), { status: 400 });
+  if (body.lessons !== undefined && (!Array.isArray(body.lessons) || body.lessons.length > 500)) throw Object.assign(new Error("Lessons must be an array with no more than 500 entries"), { status: 400 });
+  return {
+    title,
+    category,
+    description: String(body.description || "").trim().slice(0, 2000),
+    level: String(body.level || "Beginner").trim().slice(0, 40),
+    instructor: String(body.instructor || "Skillhub").trim().slice(0, 120),
+    instructorPhoto: String(body.instructorPhoto || "").trim().slice(0, 500),
+    instructorUrl: String(body.instructorUrl || "").trim().slice(0, 500),
+    instructorUrlVerified: Boolean(body.instructorUrlVerified),
+    image: String(body.image || "").trim().slice(0, 500),
+    tags: Array.isArray(body.tags) ? body.tags.map((tag) => String(tag).trim()).filter(Boolean).slice(0, 20) : [],
+    icon: String(body.icon || "code").trim().slice(0, 80),
+    colorIndex: Number.isFinite(Number(body.colorIndex)) ? Number(body.colorIndex) : 0,
+    duration: Number.isFinite(Number(body.duration)) ? Math.max(0, Number(body.duration)) : 0,
+    lessons: Array.isArray(body.lessons) ? body.lessons : [],
+  };
+};
+
+const makeCourseId = (title) => title.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
+
+router.post("/courses", async (req, res, next) => {
+  try {
+    const data = normalizeCourseInput(req.body);
+    const id = String(req.body.id || makeCourseId(data.title)).trim();
+    if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(id)) return res.status(400).json({ error: "Course ID may contain letters, numbers, underscores, and hyphens" });
+    const course = await Course.create({ _id: id, ...data });
+    res.status(201).json(course);
+  } catch (error) { next(error); }
+});
+
+router.patch("/courses/:id", async (req, res, next) => {
+  try {
+    const data = normalizeCourseInput(req.body);
+    const course = await Course.findByIdAndUpdate(req.params.id, data, { new: true, runValidators: true });
+    if (!course) return res.status(404).json({ error: "Course not found" });
+    res.json(course);
+  } catch (error) { next(error); }
+});
+
+router.delete("/courses/:id", async (req, res, next) => {
+  try {
+    const course = await Course.findByIdAndDelete(req.params.id);
+    if (!course) return res.status(404).json({ error: "Course not found" });
+    await Promise.all([
+      Enrollment.deleteMany({ course: req.params.id }),
+      Progress.deleteMany({ course: req.params.id }),
+      User.updateMany({}, { $pull: { enrolledCourses: req.params.id }, $unset: { [`progress.${req.params.id}`]: "", [`notes.${req.params.id}`]: "" } }),
+    ]);
+    res.json({ deleted: true, id: req.params.id });
+  } catch (error) { next(error); }
+});
+
+router.get("/technologies", async (_req, res, next) => {
+  try { res.json(await Technology.find().sort({ category: 1, name: 1 }).lean()); }
+  catch (error) { next(error); }
+});
+
+router.post("/technologies", async (req, res, next) => {
+  try {
+    const name = String(req.body.name || "").trim();
+    if (name.length < 2 || name.length > 80) return res.status(400).json({ error: "Technology name must be between 2 and 80 characters" });
+    const technology = await Technology.create({ name, category: String(req.body.category || "General").trim().slice(0, 80), description: String(req.body.description || "").trim().slice(0, 500), image: String(req.body.image || "").trim().slice(0, 500) });
+    res.status(201).json(technology);
+  } catch (error) { next(error); }
+});
+
+router.patch("/technologies/:id", async (req, res, next) => {
+  try {
+    const name = String(req.body.name || "").trim();
+    if (name.length < 2 || name.length > 80) return res.status(400).json({ error: "Technology name must be between 2 and 80 characters" });
+    const technology = await Technology.findByIdAndUpdate(req.params.id, { name, category: String(req.body.category || "General").trim().slice(0, 80), description: String(req.body.description || "").trim().slice(0, 500), image: String(req.body.image || "").trim().slice(0, 500) }, { new: true, runValidators: true });
+    if (!technology) return res.status(404).json({ error: "Technology not found" });
+    res.json(technology);
+  } catch (error) { next(error); }
+});
+
+router.delete("/technologies/:id", async (req, res, next) => {
+  try {
+    const technology = await Technology.findByIdAndDelete(req.params.id);
+    if (!technology) return res.status(404).json({ error: "Technology not found" });
+    res.json({ deleted: true, id: req.params.id });
+  } catch (error) { next(error); }
+});
+
 router.get("/overview", async (_req, res, next) => {
   try {
     const [totalStudents, activeCourses, pendingQueries, suspendedAccounts] =
@@ -104,7 +233,7 @@ router.get("/users", async (req, res, next) => {
       : {};
     const users = await User.find(filter)
       .select(
-        "name email avatar studentId className enrolledCourses progress isSuspended createdAt updatedAt",
+        "name email avatar studentId className accountType enrolledCourses progress isSuspended createdAt updatedAt",
       )
       .lean();
     const ids = users.map((user) => user._id);
