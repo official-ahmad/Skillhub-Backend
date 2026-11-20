@@ -307,6 +307,63 @@ router.patch("/users/:id/suspend", async (req, res, next) => {
   }
 });
 
+router.patch("/users/:id", async (req, res, next) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const name = req.body.name !== undefined ? String(req.body.name).trim() : user.name;
+    const email = req.body.email !== undefined ? String(req.body.email).trim().toLowerCase() : user.email;
+    const accountType = req.body.accountType !== undefined ? String(req.body.accountType).trim().toLowerCase() : user.accountType;
+    const studentId = req.body.studentId !== undefined ? String(req.body.studentId).trim() : user.studentId;
+    const className = req.body.className !== undefined ? String(req.body.className).trim() : user.className;
+    const password = req.body.password !== undefined ? String(req.body.password) : "";
+
+    if (name.length < 2 || name.length > 120) return res.status(400).json({ error: "Name must be between 2 and 120 characters" });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return res.status(400).json({ error: "Enter a valid email address" });
+    if (!["student", "instructor", "staff", "guest"].includes(accountType)) return res.status(400).json({ error: "Choose a supported account type" });
+    if (studentId.length > 80 || className.length > 120) return res.status(400).json({ error: "Student ID or class name is too long" });
+    if (password && password.length < 12) return res.status(400).json({ error: "Password must be at least 12 characters" });
+
+    if (email !== user.email && await User.exists({ email, _id: { $ne: user._id } })) {
+      return res.status(409).json({ error: "A user with this email already exists" });
+    }
+
+    user.name = name;
+    user.email = email;
+    user.accountType = accountType;
+    user.studentId = studentId;
+    user.className = className;
+    if (typeof req.body.isSuspended === "boolean") user.isSuspended = req.body.isSuspended;
+    if (password) user.passwordHash = await bcrypt.hash(password, 12);
+    await user.save();
+
+    const updated = await User.findById(user._id).select("name email avatar studentId className accountType isSuspended createdAt updatedAt").lean();
+    res.json({ user: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/users/:id", async (req, res, next) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    await Promise.all([
+      Enrollment.deleteMany({ student: user._id }),
+      Progress.deleteMany({ student: user._id }),
+      UserActivityLog.deleteMany({ user: user._id }),
+      Query.deleteMany({ userId: user._id }),
+      User.deleteOne({ _id: user._id }),
+    ]);
+
+    res.json({ deleted: true, id: user.id, name: user.name });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/users/:id/logs", async (req, res, next) => {
   try {
     const logs = await UserActivityLog.find({ user: req.params.id })
