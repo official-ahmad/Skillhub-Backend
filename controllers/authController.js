@@ -14,12 +14,17 @@ export async function googleLogin(req, res, next) {
     const { sub: googleId, name, email, picture, email_verified: emailVerified } = ticket.getPayload() || {};
     if (!email || !emailVerified) return res.status(401).json({ error: "A verified Google email is required" });
     if (!email.toLowerCase().endsWith("@students.au.edu.pk")) return res.status(403).json({ error: "Only official Air University student emails (@students.au.edu.pk) are allowed." });
-    const prefix = email.split("@")[0];
-    const user = await User.findOneAndUpdate(
-      { email: email.toLowerCase() },
-      { $set: { googleId, name: name || prefix, email: email.toLowerCase(), avatar: picture || "" }, $setOnInsert: { studentId: prefix } },
-      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true },
-    );
+    const normalizedEmail = email.trim().toLowerCase();
+    const prefix = normalizedEmail.split("@")[0];
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(403).json({ error: "Access restricted: your account has not been added by an administrator." });
+    }
+    user.googleId = user.googleId || googleId;
+    user.name = user.name || name || prefix;
+    user.email = normalizedEmail;
+    user.avatar = picture || user.avatar || "";
+    await user.save();
     if (user.isSuspended) return res.status(403).json({ error: "Your account has been suspended by the administrator." });
     await UserActivityLog.create({
       user: user._id,
