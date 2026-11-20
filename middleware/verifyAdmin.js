@@ -1,10 +1,11 @@
 import jwt from "jsonwebtoken";
 import Admin from "../models/Admin.js";
+import { clearAdminCookieOptions } from "../config/adminCookie.js";
 
 export default async function verifyAdmin(req, res, next) {
   const cookieToken = req.cookies?.skillhub_admin;
   const bearerToken = req.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
-  const token = cookieToken || bearerToken;
+  const token = bearerToken || cookieToken;
   if (!token) return res.status(401).json({ error: "Admin authentication required" });
 
   try {
@@ -17,7 +18,7 @@ export default async function verifyAdmin(req, res, next) {
     req.admin = admin;
     next();
   } catch {
-    res.clearCookie("skillhub_admin");
+    res.clearCookie("skillhub_admin", clearAdminCookieOptions);
     return res.status(401).json({ error: "Invalid or expired admin session" });
   }
 }

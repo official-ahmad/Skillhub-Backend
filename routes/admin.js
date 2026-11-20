@@ -9,6 +9,7 @@ import Query from "../models/Query.js";
 import UserActivityLog from "../models/UserActivityLog.js";
 import verifyAdmin from "../middleware/verifyAdmin.js";
 import Enrollment from "../models/Enrollment.js";
+import { adminCookieOptions, clearAdminCookieOptions } from "../config/adminCookie.js";
 
 const router = Router();
 const loginLimiter = rateLimit({
@@ -47,14 +48,7 @@ router.post("/login", loginLimiter, async (req, res, next) => {
     admin.lastLoginAt = new Date();
     admin.lastLoginIp = req.ip || "";
     await admin.save();
-    const secure = process.env.NODE_ENV === "production";
-    res.cookie("skillhub_admin", token, {
-      httpOnly: true,
-      secure,
-      sameSite: secure ? "none" : "lax",
-      maxAge: 2 * 60 * 60 * 1000,
-      path: "/",
-    });
+    res.cookie("skillhub_admin", token, adminCookieOptions);
     res.json({
       token,
       admin: {
@@ -70,12 +64,7 @@ router.post("/login", loginLimiter, async (req, res, next) => {
 });
 
 router.post("/logout", verifyAdmin, (req, res) => {
-  res.clearCookie("skillhub_admin", {
-    path: "/",
-    httpOnly: true,
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    secure: process.env.NODE_ENV === "production",
-  });
+  res.clearCookie("skillhub_admin", clearAdminCookieOptions);
   res.json({ loggedOut: true });
 });
 
