@@ -14,7 +14,7 @@ import { adminCookieOptions, clearAdminCookieOptions } from "../config/adminCook
 const router = Router();
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 5,
+  limit: 10,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Too many login attempts. Try again in 15 minutes." },
