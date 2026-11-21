@@ -2,6 +2,7 @@ import User from "../models/User.js";
 import Course from "../models/Course.js";
 import Progress from "../models/Progress.js";
 import Enrollment from "../models/Enrollment.js";
+import UserActivityLog from "../models/UserActivityLog.js";
 
 const objectMap = (map) => Object.fromEntries(map || []);
 
@@ -22,7 +23,7 @@ export async function updateProgress(req, res, next) {
     const { courseId } = req.params;
     const count = Number(req.body.completedLessons);
     if (!Number.isInteger(count) || count < 0) return res.status(400).json({ error: "completedLessons must be a non-negative integer" });
-    const course = await Course.findById(courseId).select("lessons");
+    const course = await Course.findById(courseId).select("title lessons");
     if (!course) return res.status(404).json({ error: "Course not found" });
     if (count > course.lessons.length) return res.status(400).json({ error: "Progress exceeds course lesson count" });
     req.user.progress.set(courseId, count);
@@ -30,6 +31,7 @@ export async function updateProgress(req, res, next) {
     await Progress.findOneAndUpdate({ student: req.user._id, course: courseId }, { $set: { completedLessons: count }, $setOnInsert: { student: req.user._id, course: courseId } }, { upsert: true, new: true, runValidators: true });
     if (count > 0) await Enrollment.findOneAndUpdate({ student: req.user._id, course: courseId }, { $setOnInsert: { student: req.user._id, course: courseId } }, { upsert: true });
     await req.user.save();
+    if (count > 0) await UserActivityLog.create({ user: req.user._id, action: "course_enrollment", ipAddress: req.ip || "", userAgent: req.get("user-agent") || "", metadata: { courseId, courseTitle: course.title }, actor: req.user.name });
     res.json({ progress: objectMap(req.user.progress), totalPassed: [...req.user.progress.values()].reduce((a, b) => a + b, 0) });
   } catch (error) { next(error); }
 }

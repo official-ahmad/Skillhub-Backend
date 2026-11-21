@@ -13,6 +13,7 @@ import adminRoutes from "./routes/admin.js";
 import queryRoutes from "./routes/queries.js";
 import technologyRoutes from "./routes/technologies.js";
 import cookieParser from "cookie-parser";
+import announcementRoutes from "./routes/announcements.js";
 
 validateEnvironment(["MONGO_URI", "JWT_SECRET", "ADMIN_JWT_SECRET", "GOOGLE_CLIENT_ID", "FRONTEND_URL", "PORT"]);
 if (process.env.JWT_SECRET.length < 32) throw new Error("JWT_SECRET must be at least 32 characters");
@@ -50,6 +51,7 @@ app.use("/api/progress", progressRoutes);
 app.use("/api/students", studentRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/queries", queryRoutes);
+app.use("/api/announcements", announcementRoutes);
 app.use((req, res) => res.status(404).json({ error: `Route ${req.method} ${req.path} not found` }));
 app.use((error, _req, res, _next) => {
   if (error.message === "Origin is not allowed by CORS") return res.status(403).json({ error: error.message });

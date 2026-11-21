@@ -18,6 +18,7 @@ const adminSchema = new mongoose.Schema(
     },
     lastLoginAt: { type: Date, default: null },
     lastLoginIp: { type: String, default: "" },
+    isActive: { type: Boolean, default: true, index: true },
   },
   { timestamps: true, versionKey: false },
 );

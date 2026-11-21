@@ -30,6 +30,8 @@ export async function googleLogin(req, res, next) {
       action: "login",
       ipAddress: req.ip || "",
       userAgent: req.get("user-agent") || "",
+      metadata: { googleVerified: true },
+      actor: user.name,
     });
     const token = jwt.sign({ sub: user.id }, process.env.JWT_SECRET, { expiresIn: "7d", issuer: "skillhub-api", audience: "skillhub-frontend" });
     res.json({ token, user: serialize(user) });
