@@ -15,9 +15,18 @@ import technologyRoutes from "./routes/technologies.js";
 import cookieParser from "cookie-parser";
 import announcementRoutes from "./routes/announcements.js";
 
-validateEnvironment(["MONGO_URI", "JWT_SECRET", "ADMIN_JWT_SECRET", "GOOGLE_CLIENT_ID", "FRONTEND_URL", "PORT"]);
-if (process.env.JWT_SECRET.length < 32) throw new Error("JWT_SECRET must be at least 32 characters");
-if (process.env.ADMIN_JWT_SECRET.length < 32) throw new Error("ADMIN_JWT_SECRET must be at least 32 characters");
+validateEnvironment([
+  "MONGO_URI",
+  "JWT_SECRET",
+  "ADMIN_JWT_SECRET",
+  "GOOGLE_CLIENT_ID",
+  "FRONTEND_URL",
+  "PORT",
+]);
+if (process.env.JWT_SECRET.length < 32)
+  throw new Error("JWT_SECRET must be at least 32 characters");
+if (process.env.ADMIN_JWT_SECRET.length < 32)
+  throw new Error("ADMIN_JWT_SECRET must be at least 32 characters");
 
 const app = express();
 const normalizeOrigin = (origin) => origin.trim().replace(/\/+$/, "");
@@ -28,7 +37,8 @@ const allowedOrigins = new Set([
 const corsOptions = {
   origin(origin, callback) {
     const normalizedOrigin = origin ? normalizeOrigin(origin) : "";
-    if (!origin || allowedOrigins.has(normalizedOrigin)) return callback(null, true);
+    if (!origin || allowedOrigins.has(normalizedOrigin))
+      return callback(null, true);
     return callback(new Error("Origin is not allowed by CORS"));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -43,7 +53,9 @@ app.options("*", cors(corsOptions));
 app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan("combined"));
-app.get("/", (_req, res) => res.json({ status: "OK", service: "Skillhub API" }));
+app.get("/", (_req, res) =>
+  res.json({ status: "OK", service: "Skillhub API" }),
+);
 app.use("/api/auth", authRoutes);
 app.use("/api/courses", courseRoutes);
 app.use("/api/technologies", technologyRoutes);
@@ -52,16 +64,31 @@ app.use("/api/students", studentRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/queries", queryRoutes);
 app.use("/api/announcements", announcementRoutes);
-app.use((req, res) => res.status(404).json({ error: `Route ${req.method} ${req.path} not found` }));
+app.use((req, res) =>
+  res.status(404).json({ error: `Route ${req.method} ${req.path} not found` }),
+);
 app.use((error, _req, res, _next) => {
-  if (error.message === "Origin is not allowed by CORS") return res.status(403).json({ error: error.message });
-  if (error.name === "ValidationError") return res.status(400).json({ error: error.message });
-  if (error.code === 11000) return res.status(409).json({ error: "An account with this email already exists" });
+  if (error.message === "Origin is not allowed by CORS")
+    return res.status(403).json({ error: error.message });
+  if (error.name === "ValidationError")
+    return res.status(400).json({ error: error.message });
+  if (error.code === 11000)
+    return res
+      .status(409)
+      .json({ error: "An account with this email already exists" });
   console.error(error);
-  res.status(error.status || 500).json({ error: error.status && error.status < 500 ? error.message : "Internal server error" });
+  res.status(error.status || 500).json({
+    error:
+      error.status && error.status < 500
+        ? error.message
+        : "Internal server error",
+  });
 });
 
 const port = Number(process.env.PORT);
-if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("PORT must be a valid TCP port in the backend .env file");
+if (!Number.isInteger(port) || port < 1 || port > 65535)
+  throw new Error("PORT must be a valid TCP port in the backend .env file");
 await mongoose.connect(process.env.MONGO_URI, { dbName: "SkillhubDB" });
-app.listen(port, "0.0.0.0", () => console.log(`Skillhub API listening on ${port}`));
+app.listen(port, "0.0.0.0", () =>
+  console.log(`Skillhub API listening on ${port}`),
+);
