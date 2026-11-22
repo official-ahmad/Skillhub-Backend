@@ -14,6 +14,9 @@ import Technology from "../models/Technology.js";
 import { sendWelcomeEmail } from "../services/mailer.js";
 import { adminCookieOptions, clearAdminCookieOptions } from "../config/adminCookie.js";
 import Announcement from "../models/Announcement.js";
+import Certificate from "../models/Certificate.js";
+import CertificateRequest from "../models/CertificateRequest.js";
+import crypto from "node:crypto";
 
 const router = Router();
 const loginLimiter = rateLimit({
@@ -62,6 +65,18 @@ router.post("/login", loginLimiter, async (req, res, next) => {
         role: admin.role,
         lastLoginAt: admin.lastLoginAt,
       },
+    });
+
+    router.get("/session", verifyAdmin, (req, res) => {
+      res.json({
+        authenticated: true,
+        admin: {
+          id: req.admin.id,
+          adminId: req.admin.adminId,
+          role: req.admin.role,
+          lastLoginAt: req.admin.lastLoginAt,
+        },
+      });
     });
   } catch (error) {
     next(error);
@@ -662,6 +677,60 @@ router.post("/queries/bulk-delete", async (req, res, next) => {
       actor: req.admin?.adminId || "administrator",
     });
     res.json({ deletedCount: result.deletedCount });
+  } catch (error) { next(error); }
+});
+
+router.get("/certificate-requests", async (req, res, next) => {
+  try {
+    const status = String(req.query.status || "pending").trim();
+    const filter = ["pending", "approved", "rejected"].includes(status) ? { status } : {};
+    const requests = await CertificateRequest.find(filter)
+      .populate("student", "name email avatar studentId")
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .lean();
+    res.json(requests);
+  } catch (error) { next(error); }
+});
+
+router.post("/certificate-requests/:id/approve", async (req, res, next) => {
+  try {
+    const request = await CertificateRequest.findById(req.params.id).populate("student");
+    if (!request) return res.status(404).json({ error: "Certificate request not found" });
+    if (request.status !== "pending") return res.status(400).json({ error: "This request has already been reviewed" });
+    const existing = await Certificate.findOne({ student: request.student._id, course: request.course });
+    if (!existing) {
+      const verificationId = `SKH-${crypto.randomBytes(7).toString("hex").toUpperCase()}`;
+      await Certificate.create({
+        verificationId,
+        student: request.student._id,
+        studentName: request.studentName,
+        immutableStudentId: request.immutableStudentId,
+        course: request.course,
+        courseTitle: request.courseTitle,
+        requiredXp: request.requiredXp,
+        xpEarned: request.currentXp,
+        xpUsed: 0,
+        badgeName: `${request.courseTitle} Verified`,
+      });
+    }
+    request.status = "approved";
+    request.reviewedAt = new Date();
+    request.reviewedBy = req.admin.adminId;
+    await request.save();
+    res.json({ approved: true, request });
+  } catch (error) { next(error); }
+});
+
+router.post("/certificate-requests/:id/reject", async (req, res, next) => {
+  try {
+    const request = await CertificateRequest.findById(req.params.id);
+    if (!request) return res.status(404).json({ error: "Certificate request not found" });
+    request.status = "rejected";
+    request.reviewedAt = new Date();
+    request.reviewedBy = req.admin.adminId;
+    await request.save();
+    res.json({ rejected: true, request });
   } catch (error) { next(error); }
 });
 

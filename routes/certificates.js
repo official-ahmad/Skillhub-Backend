@@ -5,6 +5,7 @@ import Certificate from "../models/Certificate.js";
 import Course from "../models/Course.js";
 import Progress from "../models/Progress.js";
 import XpTransaction from "../models/XpTransaction.js";
+import CertificateRequest from "../models/CertificateRequest.js";
 
 const router = Router();
 const derivedStudentId = (email) => String(email || "").split("@")[0].replace(/[^a-z0-9-]/gi, "").slice(0, 80);
@@ -27,15 +28,17 @@ async function studentXp(req) {
 
 router.get("/", auth, async (req, res, next) => {
   try {
-    const [courses, certificates, records, xp] = await Promise.all([
+    const [courses, certificates, requests, records, xp] = await Promise.all([
       Course.find().select("_id title lessons").lean(),
       Certificate.find({ student: req.user._id }).lean(),
+      CertificateRequest.find({ student: req.user._id }).sort({ createdAt: -1 }).lean(),
       Progress.find({ student: req.user._id }).lean(),
       studentXp(req),
     ]);
     const progressMap = req.user.progress ? Object.fromEntries(req.user.progress) : {};
     const recordMap = new Map(records.map((record) => [String(record.course), Number(record.completedLessons || 0)]));
     const certificateMap = new Map(certificates.map((item) => [item.course, item]));
+    const requestMap = new Map(requests.map((item) => [item.course, item]));
     const items = courses.map((course) => {
       const completedLessons = recordMap.get(String(course._id)) ?? Number(progressMap[course._id] || 0);
       const lessonCount = Array.isArray(course.lessons) ? course.lessons.length : 0;
@@ -51,6 +54,7 @@ router.get("/", auth, async (req, res, next) => {
         currentXp: xp,
         eligible: completed && xp >= requiredXp,
         certificate: certificateMap.get(course._id) || null,
+        request: requestMap.get(course._id) || null,
       };
     });
     res.json({ xp, certificates, courses: items });
@@ -103,7 +107,7 @@ router.post("/quiz/complete", auth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-router.post("/claim/:courseId", auth, async (req, res, next) => {
+router.post("/request/:courseId", auth, async (req, res, next) => {
   try {
     const course = await Course.findById(req.params.courseId).select("_id title lessons").lean();
     if (!course) return res.status(404).json({ error: "Course not found" });
@@ -113,23 +117,19 @@ router.post("/claim/:courseId", auth, async (req, res, next) => {
     const xp = await studentXp(req);
     const requiredXp = courseXpThreshold(course);
     if (xp < requiredXp) return res.status(400).json({ error: `This certificate requires ${requiredXp} XP`, currentXp: xp, requiredXp });
-    const existing = await Certificate.findOne({ student: req.user._id, course: course._id });
-    if (existing) return res.json(existing);
-    const verificationId = `SKH-${crypto.randomBytes(7).toString("hex").toUpperCase()}`;
-    const studentId = req.user.studentId || derivedStudentId(req.user.email);
-    const certificate = await Certificate.create({
-      verificationId,
+    const existingRequest = await CertificateRequest.findOne({ student: req.user._id, course: course._id, status: { $in: ["pending", "approved"] } });
+    if (existingRequest) return res.status(200).json(existingRequest);
+    const request = await CertificateRequest.create({
       student: req.user._id,
       studentName: req.user.name,
-      immutableStudentId: studentId,
+      immutableStudentId: req.user.studentId || derivedStudentId(req.user.email),
       course: course._id,
       courseTitle: course.title,
       requiredXp,
-      xpEarned: xp,
-      xpUsed: 0,
-      badgeName: `${course.title} Verified`,
+      currentXp: xp,
+      status: "pending",
     });
-    res.status(201).json(certificate);
+    res.status(201).json(request);
   } catch (error) { next(error); }
 });
 
