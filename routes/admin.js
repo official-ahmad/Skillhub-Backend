@@ -121,7 +121,7 @@ router.post("/users", async (req, res, next) => {
     const name = String(req.body.name || "").trim();
     const email = String(req.body.email || "").trim().toLowerCase();
     const accountType = String(req.body.accountType || "student").trim().toLowerCase();
-    const studentId = String(req.body.studentId || "").trim();
+    const studentId = email.split("@")[0].replace(/[^a-z0-9-]/gi, "").slice(0, 80);
     const className = String(req.body.className || "").trim();
     const password = String(req.body.password || "");
     if (name.length < 2 || name.length > 120)
@@ -264,21 +264,39 @@ router.get("/overview", async (_req, res, next) => {
 
 router.get("/users", async (req, res, next) => {
   try {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
     const search = String(req.query.search || "").trim();
-    const filter = search
-      ? {
-          $or: [
-            { name: { $regex: search, $options: "i" } },
-            { email: { $regex: search, $options: "i" } },
-            { studentId: { $regex: search, $options: "i" } },
-          ],
-        }
-      : {};
-    const users = await User.find(filter)
-      .select(
-        "name email avatar studentId className accountType enrolledCourses progress isSuspended createdAt updatedAt",
-      )
-      .lean();
+    const className = String(req.query.className || "").trim();
+    const accountType = String(req.query.accountType || "").trim().toLowerCase();
+    const status = String(req.query.status || "").trim().toLowerCase();
+    const sortBy = ["name", "email", "studentId", "className", "createdAt"].includes(req.query.sortBy)
+      ? req.query.sortBy
+      : "createdAt";
+    const sortDirection = req.query.sortDir === "asc" ? 1 : -1;
+    const filter = {};
+    if (className) filter.className = className;
+    if (accountType && ["student", "instructor", "staff", "guest"].includes(accountType)) filter.accountType = accountType;
+    if (status === "active") filter.isSuspended = false;
+    if (status === "suspended") filter.isSuspended = true;
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const prefix = `^${escaped}`;
+      filter.$or = [
+        { email: { $regex: prefix, $options: "i" } },
+        { studentId: { $regex: prefix, $options: "i" } },
+        { name: { $regex: prefix, $options: "i" } },
+      ];
+    }
+    const [users, total] = await Promise.all([
+      User.find(filter)
+        .select("name email avatar studentId className accountType isSuspended createdAt")
+        .sort({ [sortBy]: sortDirection, _id: sortDirection })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      User.countDocuments(filter),
+    ]);
     const ids = users.map((user) => user._id);
     const [enrollments, latestLogs] = await Promise.all([
       Enrollment.find({ student: { $in: ids } })
@@ -317,8 +335,9 @@ router.get("/users", async (req, res, next) => {
     const logByUser = new Map(
       latestLogs.map((entry) => [String(entry._id), entry]),
     );
-    res.json(
-      users.map((user) => ({
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    res.json({
+      users: users.map((user) => ({
         ...user,
         courses: enrollmentByUser.get(String(user._id)) || [],
         activity: logByUser.get(String(user._id)) || {
@@ -327,7 +346,10 @@ router.get("/users", async (req, res, next) => {
           lastLogout: null,
         },
       })),
-    );
+      total,
+      page,
+      totalPages,
+    });
   } catch (error) {
     next(error);
   }
@@ -371,7 +393,7 @@ router.patch("/users/:id", async (req, res, next) => {
     const name = req.body.name !== undefined ? String(req.body.name).trim() : user.name;
     const email = req.body.email !== undefined ? String(req.body.email).trim().toLowerCase() : user.email;
     const accountType = req.body.accountType !== undefined ? String(req.body.accountType).trim().toLowerCase() : user.accountType;
-    const studentId = req.body.studentId !== undefined ? String(req.body.studentId).trim() : user.studentId;
+    const studentId = email.split("@")[0].replace(/[^a-z0-9-]/gi, "").slice(0, 80);
     const className = req.body.className !== undefined ? String(req.body.className).trim() : user.className;
     const password = req.body.password !== undefined ? String(req.body.password) : "";
 
@@ -533,7 +555,7 @@ router.post("/users/bulk-import", async (req, res, next) => {
       await User.create({
         name,
         email,
-        studentId: String(row.studentId || "").trim().slice(0, 80),
+        studentId: email.split("@")[0].replace(/[^a-z0-9-]/gi, "").slice(0, 80),
         className: String(row.className || "").trim().slice(0, 120),
         accountType,
       });

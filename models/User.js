@@ -14,6 +14,7 @@ const userSchema = new mongoose.Schema(
     },
     avatar: { type: String, default: "" },
     studentId: { type: String, trim: true, default: "" },
+    xpBalance: { type: Number, min: 0, default: 0 },
     className: { type: String, trim: true, default: "" },
     accountType: {
       type: String,
@@ -31,6 +32,10 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true, versionKey: false },
 );
+
+userSchema.index({ studentId: 1 });
+userSchema.index({ createdAt: -1 });
+userSchema.index({ className: 1, accountType: 1, isSuspended: 1, createdAt: -1 });
 
 userSchema.set("toJSON", {
   transform: (_doc, value) => {
