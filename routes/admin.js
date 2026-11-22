@@ -17,6 +17,7 @@ import Announcement from "../models/Announcement.js";
 import Certificate from "../models/Certificate.js";
 import CertificateRequest from "../models/CertificateRequest.js";
 import crypto from "node:crypto";
+import { clearCache } from "../utils/shortCache.js";
 
 const router = Router();
 const loginLimiter = rateLimit({
@@ -199,6 +200,7 @@ router.post("/courses", async (req, res, next) => {
     const id = String(req.body.id || makeCourseId(data.title)).trim();
     if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(id)) return res.status(400).json({ error: "Course ID may contain letters, numbers, underscores, and hyphens" });
     const course = await Course.create({ _id: id, ...data });
+    clearCache("public:courses:");
     res.status(201).json(course);
   } catch (error) { next(error); }
 });
@@ -208,6 +210,7 @@ router.patch("/courses/:id", async (req, res, next) => {
     const data = normalizeCourseInput(req.body);
     const course = await Course.findByIdAndUpdate(req.params.id, data, { new: true, runValidators: true });
     if (!course) return res.status(404).json({ error: "Course not found" });
+    clearCache("public:courses:");
     res.json(course);
   } catch (error) { next(error); }
 });
@@ -221,6 +224,7 @@ router.delete("/courses/:id", async (req, res, next) => {
       Progress.deleteMany({ course: req.params.id }),
       User.updateMany({}, { $pull: { enrolledCourses: req.params.id }, $unset: { [`progress.${req.params.id}`]: "", [`notes.${req.params.id}`]: "" } }),
     ]);
+    clearCache("public:courses:");
     res.json({ deleted: true, id: req.params.id });
   } catch (error) { next(error); }
 });

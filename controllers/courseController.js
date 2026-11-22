@@ -1,9 +1,29 @@
 import Course from "../models/Course.js";
+import { getCached, setCached } from "../utils/shortCache.js";
+
+const COURSE_LIST_CACHE_KEY = "public:courses:list";
 
 export async function listCourses(_req, res, next) {
   try {
-    const courses = await Course.find().sort({ colorIndex: 1 }).lean();
-    res.json(courses.map((course) => ({ ...course, lessonCount: course.lessons.length, duration: course.duration || course.lessons.reduce((sum, lesson) => sum + Number(lesson.duration || 0), 0), tags: course.tags || [] })));
+    const cached = getCached(COURSE_LIST_CACHE_KEY);
+    if (cached) return res.json(cached);
+
+    const courses = await Course.find()
+      .select("_id title category description level instructor instructorPhoto instructorUrl instructorUrlVerified image tags icon colorIndex duration createdAt updatedAt")
+      .sort({ colorIndex: 1 })
+      .lean();
+    const counts = await Course.aggregate([
+      { $project: { _id: 1, lessonCount: { $size: { $ifNull: ["$lessons", []] } } } },
+    ]);
+    const countsById = new Map(counts.map((item) => [String(item._id), item.lessonCount]));
+    const response = courses.map((course) => ({
+      ...course,
+      lessonCount: countsById.get(String(course._id)) || 0,
+      lessons: [],
+      duration: course.duration || 0,
+      tags: course.tags || [],
+    }));
+    res.json(setCached(COURSE_LIST_CACHE_KEY, response, 20_000));
   } catch (error) { next(error); }
 }
 export async function getCourse(req, res, next) {

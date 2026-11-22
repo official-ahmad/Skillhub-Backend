@@ -15,6 +15,7 @@ import technologyRoutes from "./routes/technologies.js";
 import cookieParser from "cookie-parser";
 import announcementRoutes from "./routes/announcements.js";
 import certificateRoutes from "./routes/certificates.js";
+import compression from "compression";
 
 validateEnvironment([
   "MONGO_URI",
@@ -49,6 +50,7 @@ const corsOptions = {
 };
 app.disable("x-powered-by");
 app.use(helmet());
+app.use(compression());
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 app.use(cookieParser());
