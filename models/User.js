@@ -21,6 +21,12 @@ const userSchema = new mongoose.Schema(
       enum: ["student", "instructor", "staff", "guest"],
       default: "student",
     },
+    role: {
+      type: String,
+      enum: ["student", "instructor", "staff", "guest"],
+      default: "student",
+    },
+    isActive: { type: Boolean, default: true, index: true },
     passwordHash: { type: String, select: false, default: null },
     cohort: { type: String, trim: true, default: "" },
     enrolledCourses: { type: [String], default: [] },
