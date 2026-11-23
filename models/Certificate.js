@@ -3,7 +3,12 @@ import mongoose from "mongoose";
 const certificateSchema = new mongoose.Schema(
   {
     verificationId: { type: String, required: true, unique: true, index: true },
-    student: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    student: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
     studentName: { type: String, required: true },
     immutableStudentId: { type: String, required: true },
     course: { type: String, required: true, index: true },
