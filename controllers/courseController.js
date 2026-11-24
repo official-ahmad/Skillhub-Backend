@@ -3,6 +3,35 @@ import { getCached, setCached } from "../utils/shortCache.js";
 
 const COURSE_LIST_CACHE_KEY = "public:courses:list";
 
+function stripQuestionAnswers(question) {
+  if (Array.isArray(question)) return question.slice(0, 2);
+  if (!question || typeof question !== "object") return question;
+  const safeQuestion = { ...question };
+  delete safeQuestion.correctIndex;
+  return safeQuestion;
+}
+
+function stripLessonAnswers(lesson) {
+  if (Array.isArray(lesson)) {
+    const safeLesson = [...lesson];
+    if (Array.isArray(safeLesson[2]))
+      safeLesson[2] = safeLesson[2].map(stripQuestionAnswers);
+    return safeLesson;
+  }
+  if (!lesson || typeof lesson !== "object") return lesson;
+  const safeLesson = { ...lesson };
+  if (Array.isArray(safeLesson.questions))
+    safeLesson.questions = safeLesson.questions.map(stripQuestionAnswers);
+  return safeLesson;
+}
+
+function stripCourseAnswers(course) {
+  return {
+    ...course,
+    lessons: (course.lessons || []).map(stripLessonAnswers),
+  };
+}
+
 export async function listCourses(_req, res, next) {
   try {
     const cached = getCached(COURSE_LIST_CACHE_KEY);
@@ -30,6 +59,6 @@ export async function getCourse(req, res, next) {
   try {
     const course = await Course.findById(req.params.courseId).lean();
     if (!course) return res.status(404).json({ error: "Course not found" });
-    res.json(course);
+    res.json(stripCourseAnswers(course));
   } catch (error) { next(error); }
 }

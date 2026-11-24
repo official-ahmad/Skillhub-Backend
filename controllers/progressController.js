@@ -26,13 +26,114 @@ export async function updateProgress(req, res, next) {
     const course = await Course.findById(courseId).select("title lessons");
     if (!course) return res.status(404).json({ error: "Course not found" });
     if (count > course.lessons.length) return res.status(400).json({ error: "Progress exceeds course lesson count" });
-    req.user.progress.set(courseId, count);
-    if (count > 0 && !req.user.enrolledCourses.includes(courseId)) req.user.enrolledCourses.push(courseId);
-    await Progress.findOneAndUpdate({ student: req.user._id, course: courseId }, { $set: { completedLessons: count }, $setOnInsert: { student: req.user._id, course: courseId } }, { upsert: true, new: true, runValidators: true });
-    if (count > 0) await Enrollment.findOneAndUpdate({ student: req.user._id, course: courseId }, { $setOnInsert: { student: req.user._id, course: courseId } }, { upsert: true });
-    await req.user.save();
-    if (count > 0) await UserActivityLog.create({ user: req.user._id, action: "course_enrollment", ipAddress: req.ip || "", userAgent: req.get("user-agent") || "", metadata: { courseId, courseTitle: course.title }, actor: req.user.name });
-    res.json({ progress: objectMap(req.user.progress), totalPassed: [...req.user.progress.values()].reduce((a, b) => a + b, 0) });
+    const progressRecord = await Progress.findOne({ student: req.user._id, course: courseId }).lean();
+    const currentCount = progressRecord?.completedLessons ?? Number(req.user.progress?.get(courseId) || 0);
+    if (count > currentCount + 1)
+      return res.status(400).json({ error: "Complete lessons in order" });
+    if (count > currentCount) {
+      const lesson = course.lessons[currentCount];
+      const questions = Array.isArray(lesson) ? lesson[2] : lesson?.questions;
+      if (Array.isArray(questions) && questions.length)
+        return res.status(400).json({ error: "Pass the lesson quiz to record completion" });
+      await Progress.updateOne(
+        { student: req.user._id, course: courseId },
+        { $max: { completedLessons: count }, $setOnInsert: { student: req.user._id, course: courseId } },
+        { upsert: true, runValidators: true },
+      );
+      await User.updateOne(
+        { _id: req.user._id },
+        { $max: { [`progress.${courseId}`]: count }, $addToSet: { enrolledCourses: courseId } },
+      );
+      await Enrollment.findOneAndUpdate(
+        { student: req.user._id, course: courseId },
+        { $setOnInsert: { student: req.user._id, course: courseId } },
+        { upsert: true },
+      );
+      await UserActivityLog.create({ user: req.user._id, action: "course_enrollment", ipAddress: req.ip || "", userAgent: req.get("user-agent") || "", metadata: { courseId, courseTitle: course.title }, actor: req.user.name });
+    }
+    const progress = { ...objectMap(req.user.progress), [courseId]: currentCount === count ? count : Math.max(currentCount, count) };
+    res.json({ progress, totalPassed: Object.values(progress).reduce((sum, value) => sum + Number(value || 0), 0) });
+  } catch (error) { next(error); }
+}
+
+export async function submitLessonQuiz(req, res, next) {
+  try {
+    const { courseId } = req.params;
+    const lessonIndex = Number(req.params.lessonIndex);
+    const answers = req.body.answers;
+    if (!Number.isInteger(lessonIndex) || lessonIndex < 0 || !Array.isArray(answers))
+      return res.status(400).json({ error: "A valid lesson and answer list are required" });
+
+    const course = await Course.findById(courseId).select("title lessons").lean();
+    if (!course) return res.status(404).json({ error: "Course not found" });
+    const lesson = course.lessons?.[lessonIndex];
+    const questions = Array.isArray(lesson)
+      ? lesson[2]
+      : lesson?.questions;
+    if (!Array.isArray(questions) || !questions.length)
+      return res.status(404).json({ error: "Lesson quiz not found" });
+
+    const submitted = new Map();
+    for (const answer of answers) {
+      if (!Number.isInteger(answer?.questionIndex) || !Number.isInteger(answer?.selectedIndex) || submitted.has(answer.questionIndex))
+        return res.status(400).json({ error: "Invalid quiz answers" });
+      submitted.set(answer.questionIndex, answer.selectedIndex);
+    }
+    if (submitted.size !== questions.length || questions.some((_, index) => !submitted.has(index)))
+      return res.status(400).json({ error: "Submit one answer for every question" });
+
+    let correct = 0;
+    for (let questionIndex = 0; questionIndex < questions.length; questionIndex += 1) {
+      const rawQuestion = questions[questionIndex];
+      const options = Array.isArray(rawQuestion) ? rawQuestion[1] : rawQuestion?.options;
+      const correctIndex = Array.isArray(rawQuestion) ? rawQuestion[2] : rawQuestion?.correctIndex;
+      const selectedIndex = submitted.get(questionIndex);
+      if (!Array.isArray(options) || !Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= options.length)
+        return res.status(500).json({ error: "Quiz data is invalid" });
+      if (selectedIndex < 0 || selectedIndex >= options.length)
+        return res.status(400).json({ error: "Invalid answer option" });
+      if (selectedIndex === correctIndex) correct += 1;
+    }
+
+    const scorePercent = Math.round((correct / questions.length) * 100);
+    const passed = scorePercent >= 60;
+    const progressRecord = await Progress.findOne({ student: req.user._id, course: courseId }).lean();
+    const existingCount = progressRecord?.completedLessons ?? Number(req.user.progress?.get(courseId) || 0);
+    if (passed && lessonIndex > existingCount)
+      return res.status(409).json({ error: "Complete lessons in order", completedLessons: existingCount });
+
+    let completedLessons = existingCount;
+    if (passed && lessonIndex === existingCount) {
+      completedLessons = lessonIndex + 1;
+      try {
+        await Progress.updateOne(
+          { student: req.user._id, course: courseId },
+          { $max: { completedLessons }, $setOnInsert: { student: req.user._id, course: courseId } },
+          { upsert: true, runValidators: true },
+        );
+      } catch (error) {
+        // Concurrent first submissions can race on the unique student/course index.
+        if (error.code !== 11000) throw error;
+        await Progress.updateOne(
+          { student: req.user._id, course: courseId },
+          { $max: { completedLessons } },
+          { runValidators: true },
+        );
+      }
+      await User.updateOne(
+        { _id: req.user._id },
+        { $max: { [`progress.${courseId}`]: completedLessons }, $addToSet: { enrolledCourses: courseId } },
+      );
+      completedLessons = Math.max(completedLessons, Number(req.user.progress?.get(courseId) || 0));
+    }
+
+    const totalProgress = await Progress.find({ student: req.user._id }).select("course completedLessons").lean();
+    const progressMap = new Map(totalProgress.map((record) => [String(record.course), Number(record.completedLessons || 0)]));
+    for (const [id, count] of req.user.progress || []) {
+      if (!progressMap.has(String(id))) progressMap.set(String(id), Number(count || 0));
+    }
+    const totalXp = [...progressMap.values()].reduce((sum, count) => sum + count * 50, 0);
+    res.json({ scorePercent, passed, completedLessons, totalXp });
   } catch (error) { next(error); }
 }
 
