@@ -3,6 +3,7 @@ import { validateEnvironment } from "./config/environment.js";
 import mongoose from "mongoose";
 import { COURSES } from "../FrontEnd/src/components/data/coursesData.js";
 import Course from "./models/Course.js";
+import { ensureTenQuizQuestions } from "./seedQuizQuestions.js";
 import { getCourseImage, getCreatorChannel, getInstructorPhoto } from "../FrontEnd/src/components/data/assetMappings.js";
 
 validateEnvironment(["MONGO_URI"]);
@@ -21,11 +22,9 @@ const docs = COURSES.map((course) => ({
   lessons: course.v.map(([title, video, questions]) => ({
     title,
     video,
-    questions: (questions || []).map(([question, options, correctIndex]) => ({
-      question,
-      options,
-      correctIndex,
-    })),
+    questions: ensureTenQuizQuestions(course.id, title, questions || []).map(
+      ([question, options, correctIndex]) => ({ question, options, correctIndex }),
+    ),
   })),
 }));
 await Course.bulkWrite(

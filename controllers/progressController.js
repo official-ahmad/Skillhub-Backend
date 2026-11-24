@@ -3,6 +3,7 @@ import Course from "../models/Course.js";
 import Progress from "../models/Progress.js";
 import Enrollment from "../models/Enrollment.js";
 import UserActivityLog from "../models/UserActivityLog.js";
+import XpTransaction from "../models/XpTransaction.js";
 
 const objectMap = (map) => Object.fromEntries(map || []);
 
@@ -60,8 +61,8 @@ export async function submitLessonQuiz(req, res, next) {
   try {
     const { courseId } = req.params;
     const lessonIndex = Number(req.params.lessonIndex);
-    const answers = req.body.answers;
-    if (!Number.isInteger(lessonIndex) || lessonIndex < 0 || !Array.isArray(answers))
+    const submittedAnswers = req.body.submittedAnswers;
+    if (!Number.isInteger(lessonIndex) || lessonIndex < 0 || !Array.isArray(submittedAnswers))
       return res.status(400).json({ error: "A valid lesson and answer list are required" });
 
     const course = await Course.findById(courseId).select("title lessons").lean();
@@ -74,7 +75,7 @@ export async function submitLessonQuiz(req, res, next) {
       return res.status(404).json({ error: "Lesson quiz not found" });
 
     const submitted = new Map();
-    for (const answer of answers) {
+    for (const answer of submittedAnswers) {
       if (!Number.isInteger(answer?.questionIndex) || !Number.isInteger(answer?.selectedIndex) || submitted.has(answer.questionIndex))
         return res.status(400).json({ error: "Invalid quiz answers" });
       submitted.set(answer.questionIndex, answer.selectedIndex);
@@ -83,6 +84,7 @@ export async function submitLessonQuiz(req, res, next) {
       return res.status(400).json({ error: "Submit one answer for every question" });
 
     let correct = 0;
+    const questionResults = [];
     for (let questionIndex = 0; questionIndex < questions.length; questionIndex += 1) {
       const rawQuestion = questions[questionIndex];
       const options = Array.isArray(rawQuestion) ? rawQuestion[1] : rawQuestion?.options;
@@ -92,7 +94,14 @@ export async function submitLessonQuiz(req, res, next) {
         return res.status(500).json({ error: "Quiz data is invalid" });
       if (selectedIndex < 0 || selectedIndex >= options.length)
         return res.status(400).json({ error: "Invalid answer option" });
-      if (selectedIndex === correctIndex) correct += 1;
+      const isCorrect = selectedIndex === correctIndex;
+      if (isCorrect) correct += 1;
+      questionResults.push({
+        question: Array.isArray(rawQuestion) ? rawQuestion[0] : rawQuestion?.question,
+        selectedOption: options[selectedIndex],
+        correctOption: options[correctIndex],
+        isCorrect,
+      });
     }
 
     const scorePercent = Math.round((correct / questions.length) * 100);
@@ -103,6 +112,7 @@ export async function submitLessonQuiz(req, res, next) {
       return res.status(409).json({ error: "Complete lessons in order", completedLessons: existingCount });
 
     let completedLessons = existingCount;
+    let xpEarned = 0;
     if (passed && lessonIndex === existingCount) {
       completedLessons = lessonIndex + 1;
       try {
@@ -125,6 +135,18 @@ export async function submitLessonQuiz(req, res, next) {
         { $max: { [`progress.${courseId}`]: completedLessons }, $addToSet: { enrolledCourses: courseId } },
       );
       completedLessons = Math.max(completedLessons, Number(req.user.progress?.get(courseId) || 0));
+      try {
+        await XpTransaction.create({
+          student: req.user._id,
+          transactionId: `lesson:${req.user._id}:${courseId}:${lessonIndex}`,
+          type: "lesson",
+          amount: 50,
+          course: courseId,
+        });
+        xpEarned = 50;
+      } catch (error) {
+        if (error.code !== 11000) throw error;
+      }
     }
 
     const totalProgress = await Progress.find({ student: req.user._id }).select("course completedLessons").lean();
@@ -133,7 +155,16 @@ export async function submitLessonQuiz(req, res, next) {
       if (!progressMap.has(String(id))) progressMap.set(String(id), Number(count || 0));
     }
     const totalXp = [...progressMap.values()].reduce((sum, count) => sum + count * 50, 0);
-    res.json({ scorePercent, passed, completedLessons, totalXp });
+    res.json({
+      score: correct,
+      totalQuestions: questions.length,
+      scorePercent,
+      passed,
+      xpEarned,
+      questionResults,
+      completedLessons,
+      totalXp,
+    });
   } catch (error) { next(error); }
 }
 
