@@ -15,6 +15,7 @@ import technologyRoutes from "./routes/technologies.js";
 import cookieParser from "cookie-parser";
 import announcementRoutes from "./routes/announcements.js";
 import certificateRoutes from "./routes/certificates.js";
+import avatarProxyRoutes from "./routes/avatarProxy.js";
 import compression from "compression";
 
 validateEnvironment([
@@ -68,6 +69,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/queries", queryRoutes);
 app.use("/api/announcements", announcementRoutes);
 app.use("/api/certificates", certificateRoutes);
+app.use("/api/avatar-proxy", avatarProxyRoutes);
 app.use((req, res) =>
   res.status(404).json({ error: `Route ${req.method} ${req.path} not found` }),
 );
