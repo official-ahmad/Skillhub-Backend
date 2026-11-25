@@ -19,6 +19,7 @@ import {
 import Announcement from "../models/Announcement.js";
 import Certificate from "../models/Certificate.js";
 import CertificateRequest from "../models/CertificateRequest.js";
+import QuizAttempt from "../models/QuizAttempt.js";
 import crypto from "node:crypto";
 import { clearCache } from "../utils/shortCache.js";
 
@@ -1140,6 +1141,14 @@ router.post("/certificate-requests/:id/approve", async (req, res, next) => {
       return res
         .status(400)
         .json({ error: "This request has already been reviewed" });
+    const [course, progress, passedMarathon] = await Promise.all([
+      Course.findById(request.course).select("lessons").lean(),
+      Progress.findOne({ student: request.student._id, course: request.course }).select("completedLessons").lean(),
+      QuizAttempt.exists({ student: request.student._id, course: request.course, kind: "marathon", status: "graded", "result.passed": true }),
+    ]);
+    const completedLessons = Number(progress?.completedLessons ?? request.student.progress?.get(request.course) ?? 0);
+    if (!course || !course.lessons.length || completedLessons < course.lessons.length || !passedMarathon)
+      return res.status(409).json({ error: "Certificate issuance requires all lessons completed and a passed 75% Marathon Quiz" });
     const existing = await Certificate.findOne({
       student: request.student._id,
       course: request.course,

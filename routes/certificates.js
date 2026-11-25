@@ -6,6 +6,7 @@ import Course from "../models/Course.js";
 import Progress from "../models/Progress.js";
 import XpTransaction from "../models/XpTransaction.js";
 import CertificateRequest from "../models/CertificateRequest.js";
+import QuizAttempt from "../models/QuizAttempt.js";
 
 const router = Router();
 const derivedStudentId = (email) => String(email || "").split("@")[0].replace(/[^a-z0-9-]/gi, "").slice(0, 80);
@@ -28,12 +29,13 @@ async function studentXp(req) {
 
 router.get("/", auth, async (req, res, next) => {
   try {
-    const [courses, certificates, requests, records, xp] = await Promise.all([
+    const [courses, certificates, requests, records, xp, passedMarathons] = await Promise.all([
       Course.find().select("_id title lessons").lean(),
       Certificate.find({ student: req.user._id }).lean(),
       CertificateRequest.find({ student: req.user._id }).sort({ createdAt: -1 }).lean(),
       Progress.find({ student: req.user._id }).lean(),
       studentXp(req),
+      QuizAttempt.distinct("course", { student: req.user._id, kind: "marathon", status: "graded", "result.passed": true }),
     ]);
     const progressMap = req.user.progress ? Object.fromEntries(req.user.progress) : {};
     const recordMap = new Map(records.map((record) => [String(record.course), Number(record.completedLessons || 0)]));
@@ -43,6 +45,7 @@ router.get("/", auth, async (req, res, next) => {
       const completedLessons = recordMap.get(String(course._id)) ?? Number(progressMap[course._id] || 0);
       const lessonCount = Array.isArray(course.lessons) ? course.lessons.length : 0;
       const completed = lessonCount > 0 && completedLessons >= lessonCount;
+      const marathonPassed = passedMarathons.includes(course._id);
       const requiredXp = courseXpThreshold(course);
       return {
         courseId: course._id,
@@ -50,9 +53,10 @@ router.get("/", auth, async (req, res, next) => {
         completed,
         completedLessons,
         lessonCount,
+        marathonPassed,
         requiredXp,
         currentXp: xp,
-        eligible: completed && xp >= requiredXp,
+        eligible: completed && marathonPassed && xp >= requiredXp,
         certificate: certificateMap.get(course._id) || null,
         request: requestMap.get(course._id) || null,
       };
@@ -114,6 +118,8 @@ router.post("/request/:courseId", auth, async (req, res, next) => {
     const record = await Progress.findOne({ student: req.user._id, course: course._id }).lean();
     const completedLessons = record?.completedLessons ?? Number(req.user.progress?.get(req.params.courseId) || 0);
     if (!course.lessons.length || completedLessons < course.lessons.length) return res.status(400).json({ error: "Complete every lesson before claiming this certificate" });
+    const passedMarathon = await QuizAttempt.exists({ student: req.user._id, course: course._id, kind: "marathon", status: "graded", "result.passed": true });
+    if (!passedMarathon) return res.status(400).json({ error: "Pass the course Marathon Quiz with at least 75% before claiming this certificate" });
     const xp = await studentXp(req);
     const requiredXp = courseXpThreshold(course);
     if (xp < requiredXp) return res.status(400).json({ error: `This certificate requires ${requiredXp} XP`, currentXp: xp, requiredXp });

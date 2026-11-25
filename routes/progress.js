@@ -1,11 +1,16 @@
 import { Router } from "express";
 import auth from "../middleware/auth.js";
-import { getProgress, importLegacyProgress, leaderboard, resetProgress, submitLessonQuiz, updateNote, updateProgress } from "../controllers/progressController.js";
+import { getProgress, importLegacyProgress, leaderboard, resetProgress, updateNote, updateProgress } from "../controllers/progressController.js";
+import { marathonStatus, startLessonQuiz, startMarathonQuiz, submitLessonQuizAttempt, submitMarathonQuizAttempt } from "../controllers/quizController.js";
 const router = Router();
 router.use(auth);
 router.get("/", getProgress);
 router.post("/migrate", importLegacyProgress);
-router.post("/:courseId/lessons/:lessonIndex/quiz", submitLessonQuiz);
+router.post("/:courseId/lessons/:lessonIndex/quiz/start", startLessonQuiz);
+router.post("/:courseId/lessons/:lessonIndex/quiz", submitLessonQuizAttempt);
+router.get("/:courseId/marathon", marathonStatus);
+router.post("/:courseId/marathon/start", startMarathonQuiz);
+router.post("/:courseId/marathon/submit", submitMarathonQuizAttempt);
 router.put("/:courseId", updateProgress);
 router.put("/:courseId/notes/:lessonIndex", updateNote);
 router.delete("/", resetProgress);

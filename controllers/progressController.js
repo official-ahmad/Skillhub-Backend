@@ -105,7 +105,7 @@ export async function submitLessonQuiz(req, res, next) {
     }
 
     const scorePercent = Math.round((correct / questions.length) * 100);
-    const passed = scorePercent >= 60;
+    const passed = scorePercent >= 75;
     const progressRecord = await Progress.findOne({ student: req.user._id, course: courseId }).lean();
     const existingCount = progressRecord?.completedLessons ?? Number(req.user.progress?.get(courseId) || 0);
     if (passed && lessonIndex > existingCount)
