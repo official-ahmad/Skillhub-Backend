@@ -3,6 +3,7 @@
 ## Local setup
 
 1. Copy `.env.example` to `.env` and set `MONGO_URI`, a random `JWT_SECRET` of at least 32 characters, `GOOGLE_CLIENT_ID`, and the deployed frontend origin in `FRONTEND_URL`.
+   `YOUTUBE_API_KEY` is optional; when configured, playlist imports expand into individual lesson videos and YouTube channel avatar lookup uses the Data API. Without it, the API uses oEmbed/public channel metadata where available and falls back to a playable playlist lesson.
 2. Install and seed the bundled catalog:
 
    ```sh
@@ -17,6 +18,7 @@ The API and seed command use the `SkillhubDB` database from the configured Mongo
 
 - `GET /` health response
 - `GET /api/courses` and `GET /api/courses/:courseId`
+- Admin-only `POST /api/admin/courses/bulk`, `/courses/resolve-youtube`, and `/courses/resolve-instructor` support spreadsheet imports and YouTube metadata lookup.
 - `GET /api/students/leaderboard` returns the seeded class roster and standings
 - `POST /api/auth/google` accepts `{ "credential": "<Google ID token>" }`
 - `GET /api/auth/me` and `PATCH /api/auth/profile` (Bearer JWT)

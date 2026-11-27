@@ -279,6 +279,14 @@ const normalizeCourseInput = (body) => {
       new Error("Lessons must be an array with no more than 500 entries"),
       { status: 400 },
     );
+  const lessons = Array.isArray(body.lessons) && body.lessons.length
+    ? body.lessons
+    : buildCourseLessons(body);
+  if (!lessons.length)
+    throw Object.assign(
+      new Error("Provide a valid YouTube video or playlist URL"),
+      { status: 400 },
+    );
   return {
     title,
     category,
@@ -294,13 +302,21 @@ const normalizeCourseInput = (body) => {
     instructorPhoto: String(body.instructorPhoto || "")
       .trim()
       .slice(0, 500),
-    instructorUrl: String(body.instructorUrl || "")
+    instructorChannelUrl: String(body.instructorChannelUrl || body.instructorUrl || "")
       .trim()
       .slice(0, 500),
-    instructorUrlVerified: Boolean(body.instructorUrlVerified),
+    instructorUrl: String(body.instructorChannelUrl || body.instructorUrl || "")
+      .trim()
+      .slice(0, 500),
+    instructorVerified: Boolean(body.instructorVerified ?? body.instructorUrlVerified),
+    instructorUrlVerified: Boolean(body.instructorVerified ?? body.instructorUrlVerified),
     image: String(body.image || "")
       .trim()
       .slice(0, 500),
+    uploadType: body.uploadType === "playlist" ? "playlist" : "video",
+    videoOrPlaylistUrl: String(body.videoOrPlaylistUrl || "")
+      .trim()
+      .slice(0, 1000),
     tags: Array.isArray(body.tags)
       ? body.tags
           .map((tag) => String(tag).trim())
@@ -316,9 +332,166 @@ const normalizeCourseInput = (body) => {
     duration: Number.isFinite(Number(body.duration))
       ? Math.max(0, Number(body.duration))
       : 0,
-    lessons: Array.isArray(body.lessons) ? body.lessons : [],
+    lessons,
   };
 };
+
+function getYouTubeIds(rawUrl, uploadType = "video") {
+  const raw = String(rawUrl || "").trim();
+  if (uploadType === "playlist" && /^PL[\w-]{10,}$/.test(raw))
+    return { playlistId: raw };
+  if (uploadType === "video" && /^[\w-]{11}$/.test(raw))
+    return { videoId: raw };
+  try {
+    const candidateUrl = /^https?:\/\//i.test(raw)
+      ? raw
+      : /^(?:www\.)?(?:youtube\.com|youtu\.be)\//i.test(raw)
+        ? `https://${raw}`
+        : `https://www.youtube.com/playlist?list=${raw}`;
+    const url = new URL(candidateUrl);
+    const host = url.hostname.replace(/^www\./, "").toLowerCase();
+    if (!["youtube.com", "m.youtube.com", "youtu.be", "youtube-nocookie.com"].includes(host)) return {};
+    const playlistId = url.searchParams.get("list") || "";
+    if (uploadType === "playlist")
+      return /^PL[\w-]{10,}$/.test(playlistId) ? { playlistId } : {};
+    const videoId = host === "youtu.be"
+      ? url.pathname.split("/").filter(Boolean)[0]
+      : url.searchParams.get("v") || url.pathname.match(/\/(?:embed|shorts)\/([\w-]{11})/)?.[1];
+    return /^[\w-]{11}$/.test(videoId || "") ? { videoId } : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildCourseLessons(body) {
+  const ids = getYouTubeIds(body.videoOrPlaylistUrl, body.uploadType);
+  if (ids.videoId)
+    return [{ title: String(body.title || "Video lesson"), video: ids.videoId, questions: [] }];
+  if (ids.playlistId)
+    return [{ title: String(body.title || "YouTube Playlist"), video: ids.playlistId, questions: [] }];
+  return [];
+}
+
+async function fetchYouTubeJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("YouTube metadata is temporarily unavailable");
+  return response.json();
+}
+
+async function resolveYouTubeMetadata(rawUrl, uploadType, title) {
+  const ids = getYouTubeIds(rawUrl, uploadType);
+  if (!ids.videoId && !ids.playlistId)
+    throw Object.assign(new Error("Enter a valid YouTube video or playlist URL"), { status: 400 });
+  const result = { ...ids, uploadType, lessons: [], instructor: "", instructorUrl: "", instructorPhoto: "" };
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (ids.playlistId && apiKey) {
+    let pageToken = "";
+    for (let page = 0; page < 10; page += 1) {
+      const params = new URLSearchParams({
+        part: "snippet,contentDetails",
+        maxResults: "50",
+        playlistId: ids.playlistId,
+        key: apiKey,
+      });
+      if (pageToken) params.set("pageToken", pageToken);
+      const data = await fetchYouTubeJson(`https://www.googleapis.com/youtube/v3/playlistItems?${params}`);
+      for (const item of data.items || []) {
+        const videoId = item.snippet?.resourceId?.videoId;
+        if (videoId) result.lessons.push({
+          title: item.snippet?.title || "YouTube lesson",
+          video: videoId,
+          questions: [],
+        });
+      }
+      pageToken = data.nextPageToken || "";
+      if (!pageToken) break;
+    }
+  } else if (ids.videoId) {
+    try {
+      const oembed = await fetchYouTubeJson(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(`https://www.youtube.com/watch?v=${ids.videoId}`)}`);
+      result.videoTitle = oembed.title || "";
+      result.instructor = oembed.author_name || "";
+      result.instructorUrl = oembed.author_url || "";
+      if (!title) result.suggestedCourseTitle = oembed.title || "";
+      if (!apiKey && result.instructorUrl) {
+        try {
+          const channel = await resolveYouTubeInstructor(result.instructorUrl);
+          result.instructor = channel.instructor || result.instructor;
+          result.instructorPhoto = channel.instructorPhoto || "";
+        } catch { /* oEmbed instructor text is a safe fallback. */ }
+      }
+      if (apiKey) {
+        const videoParams = new URLSearchParams({ part: "snippet", id: ids.videoId, key: apiKey });
+        const videoData = await fetchYouTubeJson(`https://www.googleapis.com/youtube/v3/videos?${videoParams}`);
+        const channelId = videoData.items?.[0]?.snippet?.channelId;
+        if (channelId) {
+          const channelParams = new URLSearchParams({ part: "snippet", id: channelId, key: apiKey });
+          const channelData = await fetchYouTubeJson(`https://www.googleapis.com/youtube/v3/channels?${channelParams}`);
+          const channel = channelData.items?.[0]?.snippet;
+          if (channel) {
+            result.instructor = channel.title || result.instructor;
+            result.instructorUrl = `https://www.youtube.com/channel/${channelId}`;
+            result.instructorPhoto = channel.thumbnails?.high?.url || channel.thumbnails?.default?.url || result.instructorPhoto;
+          }
+        }
+      }
+      result.lessons = [{ title: result.videoTitle || title || "Video lesson", video: ids.videoId, questions: [] }];
+    } catch {
+      result.lessons = [{ title: title || "Video lesson", video: ids.videoId, questions: [] }];
+    }
+  }
+  if (!result.lessons.length)
+    result.lessons = [{ title: title || (ids.playlistId ? "YouTube Playlist" : "Video lesson"), video: ids.playlistId || ids.videoId, questions: [] }];
+  return result;
+}
+
+async function resolveYouTubeInstructor(rawUrl) {
+  let url;
+  try { url = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`); } catch { throw Object.assign(new Error("Enter a valid YouTube channel URL"), { status: 400 }); }
+  const host = url.hostname.replace(/^www\./, "").toLowerCase();
+  if (!["youtube.com", "m.youtube.com"].includes(host))
+    throw Object.assign(new Error("Enter a valid YouTube channel URL"), { status: 400 });
+  const handleMatch = url.pathname.match(/^\/@([\w.-]+)/);
+  const channelMatch = url.pathname.match(/^\/channel\/([\w-]+)/);
+  const userMatch = url.pathname.match(/^\/user\/([\w.-]+)/);
+  const handle = handleMatch?.[1] || "";
+  const channelId = channelMatch?.[1] || "";
+  const user = userMatch?.[1] || "";
+  if (!handle && !channelId && !user)
+    throw Object.assign(new Error("The URL does not look like a YouTube channel"), { status: 400 });
+  const result = { instructor: handle || user || "", instructorUrl: url.href, instructorPhoto: "" };
+  if (!process.env.YOUTUBE_API_KEY) {
+    try {
+      const response = await fetch(url.href, { signal: AbortSignal.timeout(5000) });
+      if (response.ok) {
+        const html = await response.text();
+        const meta = (name) => {
+          const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const match = html.match(new RegExp(`<meta[^>]+(?:property|name)=[\"']${escaped}[\"'][^>]+content=[\"']([^\"']+)[\"']`, "i"))
+            || html.match(new RegExp(`<meta[^>]+content=[\"']([^\"']+)[\"'][^>]+(?:property|name)=[\"']${escaped}[\"']`, "i"));
+          return match?.[1] || "";
+        };
+        result.instructor = meta("og:title") || result.instructor;
+        result.instructorPhoto = meta("og:image");
+      }
+    } catch { /* Use the channel handle and initials fallback if YouTube blocks server lookup. */ }
+    return result;
+  }
+  const params = new URLSearchParams({ part: "snippet", key: process.env.YOUTUBE_API_KEY });
+  if (channelId) params.set("id", channelId);
+  else if (handle) params.set("forHandle", handle);
+  else params.set("forUsername", user);
+  const data = await fetchYouTubeJson(`https://www.googleapis.com/youtube/v3/channels?${params}`);
+  const channel = data.items?.[0];
+  if (!channel) return result;
+  return {
+    instructor: channel.snippet?.title || result.instructor,
+    instructorUrl: channel.snippet?.customUrl
+      ? `https://www.youtube.com/${channel.snippet.customUrl}`
+      : `https://www.youtube.com/channel/${channel.id}`,
+    instructorPhoto: channel.snippet?.thumbnails?.high?.url || channel.snippet?.thumbnails?.default?.url || "",
+  };
+}
 
 const makeCourseId = (title) =>
   title
@@ -342,6 +515,62 @@ router.post("/courses", async (req, res, next) => {
     const course = await Course.create({ _id: id, ...data });
     clearCache("public:courses:");
     res.status(201).json(course);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/courses/resolve-youtube", async (req, res, next) => {
+  try {
+    const uploadType = req.body.uploadType === "playlist" ? "playlist" : "video";
+    const metadata = await resolveYouTubeMetadata(
+      req.body.videoOrPlaylistUrl,
+      uploadType,
+      String(req.body.title || "").trim(),
+    );
+    res.json(metadata);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/courses/resolve-instructor", async (req, res, next) => {
+  try {
+    res.json(await resolveYouTubeInstructor(String(req.body.url || "").trim()));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/courses/bulk", async (req, res, next) => {
+  try {
+    const rows = Array.isArray(req.body.courses) ? req.body.courses : [];
+    if (!rows.length || rows.length > 100)
+      return res.status(400).json({ error: "Import between 1 and 100 courses per batch" });
+    const imported = [];
+    const errors = [];
+    for (let index = 0; index < rows.length; index += 1) {
+      try {
+        const row = rows[index] && typeof rows[index] === "object" ? rows[index] : {};
+        let importRow = row;
+        if (row.uploadType === "playlist" && process.env.YOUTUBE_API_KEY && !Array.isArray(row.lessons)) {
+          try {
+            const metadata = await resolveYouTubeMetadata(row.videoOrPlaylistUrl, "playlist", row.title);
+            if (metadata.lessons.length) importRow = { ...row, lessons: metadata.lessons };
+          } catch { /* Import can use a playlist-player fallback when YouTube lookup is unavailable. */ }
+        }
+        const data = normalizeCourseInput(importRow);
+        const id = String(row.id || makeCourseId(data.title)).trim();
+        if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(id))
+          throw new Error("Course name must create a valid course ID");
+        const course = await Course.create({ _id: id, ...data });
+        imported.push(course);
+      } catch (error) {
+        errors.push({ row: index + 2, courseName: String(rows[index]?.title || ""), message: error.message || "Could not import this row" });
+      }
+    }
+    if (imported.length) clearCache("public:courses:");
+    res.json({ imported, errors, importedCount: imported.length, invalidCount: errors.length });
   } catch (error) {
     next(error);
   }

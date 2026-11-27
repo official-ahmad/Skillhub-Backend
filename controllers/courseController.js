@@ -26,9 +26,12 @@ function stripLessonAnswers(lesson) {
 }
 
 function stripCourseAnswers(course) {
+  const lessons = Array.isArray(course.lessons) ? course.lessons : [];
   return {
     ...course,
-    lessons: (course.lessons || []).map(stripLessonAnswers),
+    lessonCount: lessons.length,
+    totalLessons: lessons.length,
+    lessons: lessons.map(stripLessonAnswers),
   };
 }
 
@@ -38,16 +41,17 @@ export async function listCourses(_req, res, next) {
     if (cached) return res.json(cached);
 
     const courses = await Course.find()
-      .select("_id title category description level instructor instructorPhoto instructorUrl instructorUrlVerified image tags icon colorIndex duration createdAt updatedAt")
+      .select("_id title category description level instructor instructorPhoto instructorUrl instructorUrlVerified instructorChannelUrl instructorVerified image uploadType videoOrPlaylistUrl tags icon colorIndex duration createdAt updatedAt")
       .sort({ colorIndex: 1 })
       .lean();
     const counts = await Course.aggregate([
-      { $project: { _id: 1, lessonCount: { $size: { $ifNull: ["$lessons", []] } } } },
+      { $project: { _id: 1, lessonCount: { $cond: [{ $isArray: "$lessons" }, { $size: "$lessons" }, 0] } } },
     ]);
     const countsById = new Map(counts.map((item) => [String(item._id), item.lessonCount]));
     const response = courses.map((course) => ({
       ...course,
       lessonCount: countsById.get(String(course._id)) || 0,
+      totalLessons: countsById.get(String(course._id)) || 0,
       lessons: [],
       duration: course.duration || 0,
       tags: course.tags || [],
